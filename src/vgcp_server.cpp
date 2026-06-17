@@ -13,6 +13,11 @@ int main(int argc, char* argv[]) {
   std::string pipe_path = "/tmp/vgcp_pipe";
   int port = 3891;
 
+#ifdef _WIN32
+  WSADATA wsaData;
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return 1;
+#endif
+
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = (std::string(argv[++i]) == "pipe") ? Mode::PIPE : Mode::SOCKET;
@@ -27,29 +32,48 @@ int main(int argc, char* argv[]) {
     }
   }
 
+#ifdef _WIN32
+  if (mode == Mode::PIPE) {
+    // Named pipes on Windows require a different API (CreateNamedPipe).
+    // Only socket mode is supported in the Windows build.
+    WSACleanup();
+    return 1;
+  }
+#endif
+
   int listen_fd = -1;
   ClientSession* pipe_session = nullptr;
 
   if (mode == Mode::SOCKET) {
+#ifdef _WIN32
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) { WSACleanup(); return 1; }
+    listen_fd = (int)s;
+    char opt = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#else
     listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) return 1;
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
     struct sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port        = htons(port);
     if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) return 1;
     if (listen(listen_fd, 10) < 0) return 1;
-    fcntl(listen_fd, F_SETFL, O_NONBLOCK);
+    set_nonblocking(listen_fd);
     Fl::add_fd(listen_fd, FL_READ, server_accept_cb, nullptr);
   } else {
+#ifndef _WIN32
     unlink(pipe_path.c_str());
     if (mkfifo(pipe_path.c_str(), 0666) < 0) return 1;
     listen_fd = open(pipe_path.c_str(), O_RDWR | O_NONBLOCK);
     if (listen_fd < 0) return 1;
     pipe_session = new ClientSession{listen_fd, "", true};
     Fl::add_fd(listen_fd, FL_READ, data_cb, pipe_session);
+#endif
   }
 
   global_window = new Fl_Double_Window(doc.viewport_width, doc.viewport_height,
@@ -62,10 +86,15 @@ int main(int argc, char* argv[]) {
 
   int result = Fl::run();
 
-  close(listen_fd);
+  sock_close(listen_fd);
+#ifndef _WIN32
   if (mode == Mode::PIPE) {
     unlink(pipe_path.c_str());
     delete pipe_session;
   }
+#endif
+#ifdef _WIN32
+  WSACleanup();
+#endif
   return result;
 }

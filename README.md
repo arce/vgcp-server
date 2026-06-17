@@ -115,14 +115,6 @@ g++ -std=c++17 -o vgcp_server vgcp_server.cpp \
     -I/path/to/fltk/include
 ```
 
-### CMake (optional)
-
-```cmake
-find_package(FLTK REQUIRED)
-add_executable(vgcp_server vgcp_server.cpp)
-target_link_libraries(vgcp_server ${FLTK_LIBRARIES})
-```
-
 ## Usage
 
 ### Start Server
